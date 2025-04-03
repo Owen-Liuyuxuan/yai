@@ -31,40 +31,42 @@ type Engine struct {
 }
 
 func NewEngine(mode EngineMode, config *config.Config) (*Engine, error) {
-	var client *openai.Client
+    var client *openai.Client
 
-	if config.GetAiConfig().GetProxy() != "" {
+    // Create default config with API key
+    clientConfig := openai.DefaultConfig(config.GetAiConfig().GetKey())
+    
+    // Set DeepSeek base URL
+    clientConfig.BaseURL = "https://api.deepseek.com"
 
-		clientConfig := openai.DefaultConfig(config.GetAiConfig().GetKey())
+    // Handle proxy if configured
+    if config.GetAiConfig().GetProxy() != "" {
+        proxyUrl, err := url.Parse(config.GetAiConfig().GetProxy())
+        if err != nil {
+            return nil, err
+        }
 
-		proxyUrl, err := url.Parse(config.GetAiConfig().GetProxy())
-		if err != nil {
-			return nil, err
-		}
+        transport := &http.Transport{
+            Proxy: http.ProxyURL(proxyUrl),
+        }
 
-		transport := &http.Transport{
-			Proxy: http.ProxyURL(proxyUrl),
-		}
+        clientConfig.HTTPClient = &http.Client{
+            Transport: transport,
+        }
+    }
 
-		clientConfig.HTTPClient = &http.Client{
-			Transport: transport,
-		}
+    client = openai.NewClientWithConfig(clientConfig)
 
-		client = openai.NewClientWithConfig(clientConfig)
-	} else {
-		client = openai.NewClient(config.GetAiConfig().GetKey())
-	}
-
-	return &Engine{
-		mode:         mode,
-		config:       config,
-		client:       client,
-		execMessages: make([]openai.ChatCompletionMessage, 0),
-		chatMessages: make([]openai.ChatCompletionMessage, 0),
-		channel:      make(chan EngineChatStreamOutput),
-		pipe:         "",
-		running:      false,
-	}, nil
+    return &Engine{
+        mode:         mode,
+        config:       config,
+        client:       client,
+        execMessages: make([]openai.ChatCompletionMessage, 0),
+        chatMessages: make([]openai.ChatCompletionMessage, 0),
+        channel:      make(chan EngineChatStreamOutput),
+        pipe:         "",
+        running:      false,
+    }, nil
 }
 
 func (e *Engine) SetMode(mode EngineMode) *Engine {
@@ -125,16 +127,13 @@ func (e *Engine) ExecCompletion(input string) (*EngineExecOutput, error) {
 	e.appendUserMessage(input)
 
 	resp, err := e.client.CreateChatCompletion(
-		ctx,
-		openai.ChatCompletionRequest{
-			Model:     e.config.GetAiConfig().GetModel(),
-			MaxTokens: e.config.GetAiConfig().GetMaxTokens(),
-			Messages:  e.prepareCompletionMessages(),
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
+        ctx,
+        openai.ChatCompletionRequest{
+            Model:     "deepseek-chat", // Use DeepSeek model or from config
+            MaxTokens: e.config.GetAiConfig().GetMaxTokens(),
+            Messages:  e.prepareCompletionMessages(),
+        },
+    )
 
 	content := resp.Choices[0].Message.Content
 	e.appendAssistantMessage(content)
@@ -169,7 +168,7 @@ func (e *Engine) ChatStreamCompletion(input string) error {
 	e.appendUserMessage(input)
 
 	req := openai.ChatCompletionRequest{
-		Model:     e.config.GetAiConfig().GetModel(),
+		Model:     "deepseek-chat",
 		MaxTokens: e.config.GetAiConfig().GetMaxTokens(),
 		Messages:  e.prepareCompletionMessages(),
 		Stream:    true,

@@ -160,14 +160,24 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// switch mode
 		case tea.KeyTab:
 			if !u.state.querying && !u.state.confirming {
-				if u.state.promptMode == ChatPromptMode {
-					u.state.promptMode = ExecPromptMode
-					u.components.prompt.SetMode(ExecPromptMode)
-					u.engine.SetMode(ai.ExecEngineMode)
-				} else {
+				// Cycle through modes: Exec -> Chat -> Bash -> Exec
+				switch u.state.promptMode {
+				case ExecPromptMode:
 					u.state.promptMode = ChatPromptMode
 					u.components.prompt.SetMode(ChatPromptMode)
 					u.engine.SetMode(ai.ChatEngineMode)
+				case ChatPromptMode:
+					u.state.promptMode = BashPromptMode
+					u.components.prompt.SetMode(BashPromptMode)
+					// No need to change engine mode for bash as we'll execute directly
+				case BashPromptMode:
+					u.state.promptMode = ExecPromptMode
+					u.components.prompt.SetMode(ExecPromptMode)
+					u.engine.SetMode(ai.ExecEngineMode)
+				default:
+					u.state.promptMode = ExecPromptMode
+					u.components.prompt.SetMode(ExecPromptMode)
+					u.engine.SetMode(ai.ExecEngineMode)
 				}
 				u.engine.Reset()
 				u.components.prompt, promptCmd = u.components.prompt.Update(msg)
@@ -188,8 +198,9 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					inputPrint := u.components.prompt.AsString()
 					u.history.Add(input)
 					u.components.prompt.SetValue("")
-					u.components.prompt.Blur()
 					u.components.prompt, promptCmd = u.components.prompt.Update(msg)
+					
+					// Handle different prompt modes
 					if u.state.promptMode == ChatPromptMode {
 						cmds = append(
 							cmds,
@@ -198,7 +209,16 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							u.startChatStream(input),
 							u.awaitChatStream(),
 						)
+					} else if u.state.promptMode == BashPromptMode {
+						// Direct bash execution
+						cmds = append(
+							cmds,
+							promptCmd,
+							tea.Println(inputPrint),
+							u.execCommand(input), // Execute bash command directly
+						)
 					} else {
+						// Default exec mode (AI-assisted)
 						cmds = append(
 							cmds,
 							promptCmd,
@@ -416,88 +436,115 @@ func (u *Ui) View() string {
 }
 
 func (u *Ui) startRepl(config *config.Config) tea.Cmd {
-	return tea.Sequence(
-		tea.ClearScreen,
-		tea.Println(u.components.renderer.RenderContent(u.components.renderer.RenderHelpMessage())),
-		textinput.Blink,
-		func() tea.Msg {
-			u.config = config
+    return tea.Sequence(
+        tea.ClearScreen,
+        tea.Println(u.components.renderer.RenderContent(u.components.renderer.RenderHelpMessage())),
+        textinput.Blink,
+        func() tea.Msg {
+            u.config = config
 
-			if u.state.promptMode == DefaultPromptMode {
-				u.state.promptMode = GetPromptModeFromString(config.GetUserConfig().GetDefaultPromptMode())
-			}
+            if u.state.promptMode == DefaultPromptMode {
+                u.state.promptMode = GetPromptModeFromString(config.GetUserConfig().GetDefaultPromptMode())
+            }
 
-			engineMode := ai.ExecEngineMode
-			if u.state.promptMode == ChatPromptMode {
-				engineMode = ai.ChatEngineMode
-			}
+            engineMode := ai.ExecEngineMode
+            if u.state.promptMode == ChatPromptMode {
+                engineMode = ai.ChatEngineMode
+            }
+            // Note: BashPromptMode doesn't need a special engine mode as it executes commands directly
 
-			engine, err := ai.NewEngine(engineMode, config)
-			if err != nil {
-				return err
-			}
+            engine, err := ai.NewEngine(engineMode, config)
+            if err != nil {
+                return err
+            }
 
-			if u.state.pipe != "" {
-				engine.SetPipe(u.state.pipe)
-			}
+            if u.state.pipe != "" {
+                engine.SetPipe(u.state.pipe)
+            }
 
-			u.engine = engine
-			u.state.buffer = "Welcome \n\n"
-			u.state.command = ""
-			u.components.prompt = NewPrompt(u.state.promptMode)
+            u.engine = engine
+            u.state.buffer = "Welcome \n\n"
+            u.state.command = ""
+            u.components.prompt = NewPrompt(u.state.promptMode)
 
-			return nil
-		},
-	)
+            return nil
+        },
+    )
 }
 
 func (u *Ui) startCli(config *config.Config) tea.Cmd {
-	u.config = config
+    u.config = config
 
-	if u.state.promptMode == DefaultPromptMode {
-		u.state.promptMode = GetPromptModeFromString(config.GetUserConfig().GetDefaultPromptMode())
-	}
+    if u.state.promptMode == DefaultPromptMode {
+        u.state.promptMode = GetPromptModeFromString(config.GetUserConfig().GetDefaultPromptMode())
+    }
 
-	engineMode := ai.ExecEngineMode
-	if u.state.promptMode == ChatPromptMode {
-		engineMode = ai.ChatEngineMode
-	}
+    engineMode := ai.ExecEngineMode
+    if u.state.promptMode == ChatPromptMode {
+        engineMode = ai.ChatEngineMode
+    }
 
-	engine, err := ai.NewEngine(engineMode, config)
-	if err != nil {
-		u.state.error = err
-		return nil
-	}
+    engine, err := ai.NewEngine(engineMode, config)
+    if err != nil {
+        u.state.error = err
+        return nil
+    }
 
-	if u.state.pipe != "" {
-		engine.SetPipe(u.state.pipe)
-	}
+    if u.state.pipe != "" {
+        engine.SetPipe(u.state.pipe)
+    }
 
-	u.engine = engine
-	u.state.querying = true
-	u.state.confirming = false
-	u.state.buffer = ""
-	u.state.command = ""
+    u.engine = engine
+    u.state.querying = true
+    u.state.confirming = false
+    u.state.buffer = ""
+    u.state.command = ""
 
-	if u.state.promptMode == ExecPromptMode {
-		return tea.Batch(
-			u.components.spinner.Tick,
-			func() tea.Msg {
-				output, err := u.engine.ExecCompletion(u.state.args)
-				u.state.querying = false
-				if err != nil {
-					return err
-				}
+    // Handle different prompt modes for CLI
+    if u.state.promptMode == BashPromptMode {
+        // Execute bash command directly without confirmation
+        return func() tea.Msg {
+            u.state.querying = false
+            u.state.executing = true
+            return u.execCommand(u.state.args)()
+        }
+    } else if u.state.promptMode == ExecPromptMode {
+        return tea.Batch(
+            u.components.spinner.Tick,
+            func() tea.Msg {
+                output, err := u.engine.ExecCompletion(u.state.args)
+                u.state.querying = false
+                if err != nil {
+                    return err
+                }
 
-				return *output
-			},
-		)
-	} else {
-		return tea.Batch(
-			u.startChatStream(u.state.args),
-			u.awaitChatStream(),
-		)
-	}
+                return *output
+            },
+        )
+    } else {
+        return tea.Batch(
+            u.startChatStream(u.state.args),
+            u.awaitChatStream(),
+        )
+    }
+}
+
+func (u *Ui) execBashCommand(input string) tea.Cmd {
+    u.state.querying = false
+    u.state.confirming = false
+    u.state.executing = true
+
+    c := run.PrepareInteractiveCommand(input)
+
+    return tea.ExecProcess(c, func(error error) tea.Msg {
+        u.state.executing = false
+        u.state.command = ""
+
+        if error != nil {
+            return run.NewRunOutput(error, fmt.Sprintf("[error: %v]", error), "")
+        }
+        return run.NewRunOutput(nil, "", "[command completed]")
+    })
 }
 
 func (u *Ui) startConfig() tea.Cmd {

@@ -19,9 +19,10 @@ type UiInput struct {
 func NewUIInput() (*UiInput, error) {
 	flagSet := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
-	var exec, chat bool
+	var exec, chat, bash bool  // Add bash flag
 	flagSet.BoolVar(&exec, "e", false, "exec prompt mode")
 	flagSet.BoolVar(&chat, "c", false, "chat prompt mode")
+	flagSet.BoolVar(&bash, "b", false, "bash prompt mode")  // Add this line
 	err := flagSet.Parse(os.Args[1:])
 	if err != nil {
 		fmt.Println("Error parsing flags:", err)
@@ -62,11 +63,14 @@ func NewUIInput() (*UiInput, error) {
 	}
 
 	promptMode := DefaultPromptMode
-	if exec && !chat {
+	if exec && !chat && !bash {
 		promptMode = ExecPromptMode
-	} else if !exec && chat {
+	} else if !exec && chat && !bash {
 		promptMode = ChatPromptMode
+	} else if !exec && !chat && bash {
+		promptMode = BashPromptMode  // Set bash mode
 	}
+	
 
 	return &UiInput{
 		runMode:    runMode,

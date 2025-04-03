@@ -15,6 +15,8 @@ const (
 	config_placeholder = "Enter your OpenAI key..."
 	chat_icon          = "💬 > "
 	chat_placeholder   = "Ask me something..."
+	bash_icon          = "$ > "          // Add this
+	bash_placeholder   = "Run bash..."   // Add this
 )
 
 type Prompt struct {
@@ -99,6 +101,8 @@ func getPromptStyle(mode PromptMode) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(exec_color))
 	case ConfigPromptMode:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(config_color))
+	case BashPromptMode:  // Add this case
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff00"))  // Green color for bash
 	default:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(chat_color))
 	}
@@ -112,17 +116,22 @@ func getPromptIcon(mode PromptMode) string {
 		return style.Render(exec_icon)
 	case ConfigPromptMode:
 		return style.Render(config_icon)
+	case BashPromptMode:  // Add this case
+		return style.Render(bash_icon)
 	default:
 		return style.Render(chat_icon)
 	}
 }
 
+// Update the getPromptPlaceholder function
 func getPromptPlaceholder(mode PromptMode) string {
 	switch mode {
 	case ExecPromptMode:
 		return exec_placeholder
 	case ConfigPromptMode:
 		return config_placeholder
+	case BashPromptMode:  // Add this case
+		return bash_placeholder
 	default:
 		return chat_placeholder
 	}

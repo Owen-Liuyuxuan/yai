@@ -1,19 +1,21 @@
 package config
 
 const (
-	openai_key         = "OPENAI_KEY"
-	openai_model       = "OPENAI_MODEL"
-	openai_proxy       = "OPENAI_PROXY"
-	openai_temperature = "OPENAI_TEMPERATURE"
-	openai_max_tokens  = "OPENAI_MAX_TOKENS"
+    openai_key         = "OPENAI_KEY"
+    openai_model       = "OPENAI_MODEL"
+    openai_proxy       = "OPENAI_PROXY"
+    openai_temperature = "OPENAI_TEMPERATURE"
+    openai_max_tokens  = "OPENAI_MAX_TOKENS"
+    openai_base_url    = "OPENAI_BASE_URL" // Add this for DeepSeek
 )
 
 type AiConfig struct {
-	key         string
-	model       string
-	proxy       string
-	temperature float64
-	maxTokens   int
+    key         string
+    model       string
+    proxy       string
+    temperature float64
+    maxTokens   int
+    baseURL     string // Add this for DeepSeek
 }
 
 func (c AiConfig) GetKey() string {
@@ -34,4 +36,8 @@ func (c AiConfig) GetTemperature() float64 {
 
 func (c AiConfig) GetMaxTokens() int {
 	return c.maxTokens
+}
+
+func (c AiConfig) GetBaseURL() string {
+    return c.baseURL
 }
