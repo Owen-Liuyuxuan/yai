@@ -27,6 +27,7 @@ type Engine struct {
 	chatMessages []openai.ChatCompletionMessage
 	channel      chan EngineChatStreamOutput
 	pipe         string
+	bashEnv      string // Add this field
 	running      bool
 }
 
@@ -65,8 +66,17 @@ func NewEngine(mode EngineMode, config *config.Config) (*Engine, error) {
         chatMessages: make([]openai.ChatCompletionMessage, 0),
         channel:      make(chan EngineChatStreamOutput),
         pipe:         "",
+		bashEnv:      "", // Initialize the new field
         running:      false,
     }, nil
+}
+
+func (e *Engine) SetBashEnvironment(env string) *Engine {
+    // We can use the existing pipe mechanism to provide this context
+    // In a more comprehensive implementation, we might want to add a dedicated field
+    e.bashEnv = env
+    
+    return e
 }
 
 func (e *Engine) SetMode(mode EngineMode) *Engine {
@@ -261,30 +271,41 @@ func (e *Engine) appendAssistantMessage(content string) *Engine {
 }
 
 func (e *Engine) prepareCompletionMessages() []openai.ChatCompletionMessage {
-	messages := []openai.ChatCompletionMessage{
-		{
-			Role:    openai.ChatMessageRoleSystem,
-			Content: e.prepareSystemPrompt(),
-		},
-	}
+    messages := []openai.ChatCompletionMessage{
+        {
+            Role:    openai.ChatMessageRoleSystem,
+            Content: e.prepareSystemPrompt(),
+        },
+    }
 
-	if e.pipe != "" {
-		messages = append(
-			messages,
-			openai.ChatCompletionMessage{
-				Role:    openai.ChatMessageRoleUser,
-				Content: e.preparePipePrompt(),
-			},
-		)
-	}
+    if e.pipe != "" {
+        messages = append(
+            messages,
+            openai.ChatCompletionMessage{
+                Role:    openai.ChatMessageRoleUser,
+                Content: e.preparePipePrompt(),
+            },
+        )
+    }
+    
+    // Add bash environment context if available
+    if e.bashEnv != "" {
+        messages = append(
+            messages,
+            openai.ChatCompletionMessage{
+                Role:    openai.ChatMessageRoleUser,
+                Content: "Current bash environment: " + e.bashEnv,
+            },
+        )
+    }
 
-	if e.mode == ExecEngineMode {
-		messages = append(messages, e.execMessages...)
-	} else {
-		messages = append(messages, e.chatMessages...)
-	}
+    if e.mode == ExecEngineMode {
+        messages = append(messages, e.execMessages...)
+    } else {
+        messages = append(messages, e.chatMessages...)
+    }
 
-	return messages
+    return messages
 }
 
 func (e *Engine) preparePipePrompt() string {

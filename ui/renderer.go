@@ -76,7 +76,7 @@ func (r *Renderer) RenderConfigMessage() string {
 func (r *Renderer) RenderHelpMessage() string {
 	help := "**Help**\n"
 	help += "- `↑`/`↓` : navigate in history\n"
-	help += "- `tab`   : switch between `🚀 exec`, `💬 chat`, and `$ bash` prompt modes\n"
+	help += "- `ctrl+q`   : switch between `🚀 exec`, `💬 chat`, and `$ bash` prompt modes\n"
 	help += "- `ctrl+h`: show help\n"
 	help += "- `ctrl+s`: edit settings\n"
 	help += "- `ctrl+r`: clear terminal and reset discussion history\n"

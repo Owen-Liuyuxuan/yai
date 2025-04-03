@@ -3,6 +3,12 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"bufio"
+    "io"
+    "os/exec"
+    "sync"
+	"time" // Added missing import
+    "io/ioutil" // For ReadFile
 
 	"github.com/ekkinox/yai/ai"
 	"github.com/ekkinox/yai/config"
@@ -16,6 +22,16 @@ import (
 	"github.com/spf13/viper"
 )
 
+// Define a BashSession struct to manage the persistent bash process
+type BashSession struct {
+    cmd       *exec.Cmd
+    stdin     io.WriteCloser
+    stdout    io.ReadCloser
+    stderr    io.ReadCloser
+    outputBuf string
+    mutex     sync.Mutex
+}
+
 type UiState struct {
 	error       error
 	runMode     RunMode
@@ -28,6 +44,7 @@ type UiState struct {
 	pipe        string
 	buffer      string
 	command     string
+	currentDir  string // Add current directory tracking
 }
 
 type UiDimensions struct {
@@ -48,10 +65,11 @@ type Ui struct {
 	config     *config.Config
 	engine     *ai.Engine
 	history    *history.History
+	bashSession *BashSession // Add this field
 }
 
 func NewUi(input *UiInput) *Ui {
-	return &Ui{
+	ui := &Ui{
 		state: UiState{
 			error:       nil,
 			runMode:     input.GetRunMode(),
@@ -64,6 +82,7 @@ func NewUi(input *UiInput) *Ui {
 			pipe:        input.GetPipe(),
 			buffer:      "",
 			command:     "",
+			currentDir:  "", // Initialize current directory
 		},
 		dimensions: UiDimensions{
 			150,
@@ -79,6 +98,160 @@ func NewUi(input *UiInput) *Ui {
 		},
 		history: history.NewHistory(),
 	}
+	// Initialize bash session
+    ui.initBashSession()
+
+	return ui
+}
+
+func (u *Ui) initBashSession() {
+    // Create a bash process with login shell to load profile
+    cmd := exec.Command("bash", "--login")
+    
+    stdin, _ := cmd.StdinPipe()
+    stdout, _ := cmd.StdoutPipe()
+    stderr, _ := cmd.StderrPipe()
+    
+    // Start the process
+    cmd.Start()
+    
+    u.bashSession = &BashSession{
+        cmd:       cmd,
+        stdin:     stdin,
+        stdout:    stdout,
+        stderr:    stderr,
+        outputBuf: "",
+        mutex:     sync.Mutex{},
+    }
+    
+    // Start a goroutine to read stdout
+    go func() {
+        scanner := bufio.NewScanner(stdout)
+        for scanner.Scan() {
+            line := scanner.Text()
+            
+            u.bashSession.mutex.Lock()
+            u.bashSession.outputBuf += line + "\n"
+            u.bashSession.mutex.Unlock()
+        }
+    }()
+    
+    // Start a goroutine to read stderr
+    go func() {
+        scanner := bufio.NewScanner(stderr)
+        for scanner.Scan() {
+            line := scanner.Text()
+            
+            u.bashSession.mutex.Lock()
+            u.bashSession.outputBuf += line + "\n"
+            u.bashSession.mutex.Unlock()
+        }
+    }()
+}
+
+// Execute a command in the persistent bash session
+func (u *Ui) execInBashSession(input string) tea.Cmd {
+    u.state.querying = false
+    u.state.confirming = false
+    u.state.executing = true
+
+    return func() tea.Msg {
+        // Clear previous output
+        u.bashSession.mutex.Lock()
+        u.bashSession.outputBuf = ""
+        u.bashSession.mutex.Unlock()
+        
+        // Create a unique marker to detect command completion
+        marker := fmt.Sprintf("YAI_CMD_COMPLETE_%d", time.Now().UnixNano())
+        
+        // Write command to stdin with completion marker
+        cmdWithMarker := fmt.Sprintf("%s; echo '%s'", input, marker)
+        _, err := io.WriteString(u.bashSession.stdin, cmdWithMarker+"\n")
+        if err != nil {
+            u.state.executing = false
+            return run.NewRunOutput(err, fmt.Sprintf("[error: %v]", err), "")
+        }
+        
+        // Wait for the marker to appear in the output
+        startTime := time.Now()
+        timeout := 30 * time.Second // Maximum wait time
+        
+        for {
+            // Check if we've exceeded the timeout
+            if time.Since(startTime) > timeout {
+                u.state.executing = false
+                return run.NewRunOutput(fmt.Errorf("command timed out"), "[error: command timed out]", "")
+            }
+            
+            // Get the current output
+            u.bashSession.mutex.Lock()
+            output := u.bashSession.outputBuf
+            u.bashSession.mutex.Unlock()
+            
+            // Check if the marker is in the output
+            if strings.Contains(output, marker) {
+                // Remove the marker from the output
+                cleanOutput := strings.Replace(output, marker, "", -1)
+                cleanOutput = strings.Replace(cleanOutput, "\n\n", "\n", -1) // Clean up extra newlines
+                
+                u.state.executing = false
+                u.state.command = ""
+                
+                return run.NewRunOutput(nil, "", cleanOutput)
+            }
+            
+            // Sleep a bit before checking again
+            time.Sleep(50 * time.Millisecond)
+        }
+    }
+}
+
+// Clean up the bash session when the application exits
+func (u *Ui) cleanupBashSession() {
+    if u.bashSession != nil && u.bashSession.cmd != nil && u.bashSession.cmd.Process != nil {
+        // Send exit command
+        io.WriteString(u.bashSession.stdin, "exit\n")
+        // Wait for process to exit
+        u.bashSession.cmd.Wait()
+    }
+}
+
+func (u *Ui) getBashEnvironment() map[string]string {
+    // Execute env command to get all variables
+    u.execInBashSession("env > /tmp/yai_env.txt")
+    
+    // Read the file
+    data, err := ioutil.ReadFile("/tmp/yai_env.txt")
+    if err != nil {
+        return nil
+    }
+    
+    // Parse environment variables
+    env := make(map[string]string)
+    lines := strings.Split(string(data), "\n")
+    for _, line := range lines {
+        parts := strings.SplitN(line, "=", 2)
+        if len(parts) == 2 {
+            env[parts[0]] = parts[1]
+        }
+    }
+    
+    return env
+}
+
+// Modify the AI engine to be aware of bash environment
+func (u *Ui) updateEngineWithBashEnv() {
+    env := u.getBashEnvironment()
+    if env != nil {
+        // Create a string representation of the environment
+        envStr := "Current bash environment variables:\n"
+        for k, v := range env {
+            envStr += fmt.Sprintf("%s=%s\n", k, v)
+        }
+        
+        // Update the engine with this information
+        u.engine.SetBashEnvironment(envStr)
+    }
 }
 
 func (u *Ui) Init() tea.Cmd {
@@ -138,6 +311,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		// quit
 		case tea.KeyCtrlC:
+			u.cleanupBashSession() // Clean up bash session
 			return u, tea.Quit
 		// history
 		case tea.KeyUp, tea.KeyDown:
@@ -158,9 +332,10 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		// switch mode
-		case tea.KeyTab:
+		case tea.KeyCtrlQ:
 			if !u.state.querying && !u.state.confirming {
 				// Cycle through modes: Exec -> Chat -> Bash -> Exec
+				u.updateCurrentDir()
 				switch u.state.promptMode {
 				case ExecPromptMode:
 					u.state.promptMode = ChatPromptMode
@@ -215,7 +390,8 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							cmds,
 							promptCmd,
 							tea.Println(inputPrint),
-							u.execCommand(input), // Execute bash command directly
+							u.execInBashSession(input), // Use the persistent bash session
+							u.updateCurrentDir(),      // Update current directory after command execution
 						)
 					} else {
 						// Default exec mode (AI-assisted)
@@ -293,7 +469,9 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					u.components.prompt.SetValue("")
 					return u, tea.Sequence(
 						promptCmd,
-						u.execCommand(u.state.command),
+						// u.execCommand(u.state.command),
+						// u.execCommand("sleep 0.001"),
+						u.execInBashSession(u.state.command),
 					)
 				} else {
 					u.state.confirming = false
@@ -403,6 +581,46 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return u, tea.Batch(cmds...)
 }
 
+// Update the current directory from bash session
+func (u *Ui) updateCurrentDir() tea.Cmd {
+    return func() tea.Msg {
+        // Execute pwd command
+        u.execInBashSession("pwd > /tmp/yai_pwd.txt")
+        
+        // Give it a moment to complete
+        time.Sleep(50 * time.Millisecond)
+        
+        // Read the current directory
+        data, err := ioutil.ReadFile("/tmp/yai_pwd.txt")
+        if err != nil {
+            return nil
+        }
+        
+        pwd := strings.TrimSpace(string(data))
+        u.state.currentDir = pwd
+        
+        // Update the prompt prefix to show current directory
+        u.updatePromptPrefix()
+        
+        return nil
+    }
+}
+
+func (u *Ui) updatePromptPrefix() {
+    if u.state.currentDir != "" {
+        // Extract just the last directory name for cleaner display
+        parts := strings.Split(u.state.currentDir, "/")
+        dirName := parts[len(parts)-1]
+        if dirName == "" && len(parts) > 1 {
+            dirName = parts[len(parts)-2]
+        }
+        
+        // Set a prefix that shows the current directory
+        prefix := fmt.Sprintf("[%s] ", dirName)
+        u.components.prompt.SetPrefix(prefix)
+    }
+}
+
 func (u *Ui) View() string {
 	if u.state.error != nil {
 		return u.components.renderer.RenderError(fmt.Sprintf("[error] %s", u.state.error))
@@ -506,7 +724,7 @@ func (u *Ui) startCli(config *config.Config) tea.Cmd {
         return func() tea.Msg {
             u.state.querying = false
             u.state.executing = true
-            return u.execCommand(u.state.args)()
+            return u.execInBashSession(u.state.args)() // Use bash session instead
         }
     } else if u.state.promptMode == ExecPromptMode {
         return tea.Batch(
@@ -546,6 +764,8 @@ func (u *Ui) execBashCommand(input string) tea.Cmd {
         return run.NewRunOutput(nil, "", "[command completed]")
     })
 }
+
+
 
 func (u *Ui) startConfig() tea.Cmd {
 	return func() tea.Msg {
@@ -673,7 +893,7 @@ func (u *Ui) execCommand(input string) tea.Cmd {
 	u.state.confirming = false
 	u.state.executing = true
 
-	c := run.PrepareInteractiveCommand(input)
+	c :=  run.PrepareInteractiveCommand(input)
 
 	return tea.ExecProcess(c, func(error error) tea.Msg {
 		u.state.executing = false

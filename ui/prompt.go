@@ -2,7 +2,7 @@ package ui
 
 import (
 	"fmt"
-
+	"strings"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -93,6 +93,24 @@ func (p *Prompt) AsString() string {
 	style := getPromptStyle(p.mode)
 
 	return fmt.Sprintf("%s%s", style.Render(getPromptIcon(p.mode)), style.Render(p.input.Value()))
+}
+
+func (p *Prompt) SetPrefix(prefix string) *Prompt {
+    p.input.Prompt = prefix + getPromptIcon(p.mode)
+    return p
+}
+
+// SetCurrentDir is a convenience method to set the current directory in the prompt
+func (p *Prompt) SetCurrentDir(dir string) *Prompt {
+    // Extract just the last directory name for cleaner display
+    parts := strings.Split(dir, "/")
+    dirName := parts[len(parts)-1]
+    if dirName == "" && len(parts) > 1 {
+        dirName = parts[len(parts)-2]
+    }
+    
+    // Set a prefix that shows the current directory
+    return p.SetPrefix(fmt.Sprintf("[%s] ", dirName))
 }
 
 func getPromptStyle(mode PromptMode) lipgloss.Style {

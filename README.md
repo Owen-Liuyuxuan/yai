@@ -1,8 +1,7 @@
 # 🚀 Yai 💬 - AI powered terminal assistant
 
-Let's Get DeepSeek Version!
-
-
+- Let's Get DeepSeek Version!
+- Add a simple bash command
 
 ----
 
