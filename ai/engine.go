@@ -341,14 +341,14 @@ func (e *Engine) prepareSystemPromptExecPart() string {
 }
 
 func (e *Engine) prepareSystemPromptChatPart() string {
-	return "You are Yai a powerful terminal assistant created by github.com/ekkinox.\n" +
-		"You will answer in the most helpful possible way.\n" +
-		"Always format your answer in markdown format.\n\n" +
-		"For example:\n" +
-		"Me: What is 2+2 ?\n" +
-		"Yai: The answer for `2+2` is `4`\n" +
-		"Me: +2 again ?\n" +
-		"Yai: The answer is `6`\n"
+	return "君は日本語の先生です\n" +
+		"日本語の文を改善する先生です。提出した文の丁寧さを確認して、その口調を維持して日本語の文法を修正します。\n" +
+		"提出した文と修正した文を整合して答えてくれ.\n\n" +
+		"例:\n" +
+		"Q: すみません、私は日本語が食べませ ?\n" +
+		"A: 'すみません、私は日本語がわかりません'\n" +
+		"解析: ..... \n" +
+		"よろしくお願いします"
 }
 
 func (e *Engine) prepareSystemPromptContextPart() string {
