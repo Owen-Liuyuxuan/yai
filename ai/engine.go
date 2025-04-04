@@ -290,13 +290,15 @@ func (e *Engine) prepareCompletionMessages() []openai.ChatCompletionMessage {
     
     // Add bash environment context if available
     if e.bashEnv != "" {
-        messages = append(
-            messages,
-            openai.ChatCompletionMessage{
-                Role:    openai.ChatMessageRoleUser,
-                Content: "Current bash environment: " + e.bashEnv,
-            },
-        )
+		if e.mode == ExecEngineMode {
+			messages = append(
+				messages,
+				openai.ChatCompletionMessage{
+					Role:    openai.ChatMessageRoleUser,
+					Content: "Current bash environment: " + e.bashEnv,
+				},
+			)
+		}
     }
 
     if e.mode == ExecEngineMode {
